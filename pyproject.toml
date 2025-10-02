@@ -14,9 +14,37 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.18.2",
+    "pytest>=8.4.2",
     "ruff>=0.13.2",
     "types-requests>=2.32.4.20250913",
 ]
+
+[tool.pytest.ini_options]
+# Padrão de descoberta de testes
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+# Diretórios a serem testados
+testpaths = ["tests"]
+
+# Marcadores customizados
+markers = [
+    "network: marca testes que precisam de conexão de rede",
+    "slow: marca testes lentos (downloads, etc)",
+]
+
+# Opções padrão
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+
+# Captura de saída
+console_output_style = "progress"
+
+[tool.mypy]
 
 [[tool.mypy.overrides]]
 module = "libgen_api_enhanced.*"
