@@ -8,6 +8,74 @@ import time
 from typing import Optional
 from dataclasses import dataclass
 import logging
+from contextlib import contextmanager
+import sys
+
+
+@contextmanager
+def suppress_libgen_output():
+    """Suprime apenas prints específicos da biblioteca libgen-api-enhanced"""
+    
+    # Cria um wrapper para stdout/stderr que filtra mensagens específicas
+    class FilteredWriter:
+        def __init__(self, original_stream):
+            self.original_stream = original_stream
+            self.buffer = ""
+            
+        def write(self, text):
+            # Bloqueia mensagens específicas da biblioteca libgen-api-enhanced
+            if text and any(msg in text for msg in [
+                "No results table found",
+                "Error during search page retrieval",
+                "HTTP error 500",
+                "Connection broken",
+                "IncompleteRead"
+            ]):
+                return len(text)
+            # Passa tudo o resto para o stream original
+            return self.original_stream.write(text)
+        
+        def flush(self):
+            self.original_stream.flush()
+        
+        def __getattr__(self, name):
+            # Delega outros atributos para o stream original
+            return getattr(self.original_stream, name)
+    
+    # Salva streams originais
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    
+    # Salva print original
+    import builtins
+    original_print = builtins.print
+    
+    def filtered_print(*args, **kwargs):
+        text = ' '.join(str(arg) for arg in args)
+        # Bloqueia mensagens de erro da biblioteca libgen
+        if not any(msg in text for msg in [
+            "No results table found",
+            "Error during search page retrieval",
+            "HTTP error 500",
+            "Connection broken",
+            "IncompleteRead"
+        ]):
+            original_print(*args, **kwargs)
+    
+    try:
+        # Substitui stdout/stderr com versões filtradas
+        sys.stdout = FilteredWriter(old_stdout)
+        sys.stderr = FilteredWriter(old_stderr)
+        
+        # Substitui print builtin
+        builtins.print = filtered_print
+        
+        yield
+    finally:
+        # Restaura tudo
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        builtins.print = original_print
 
 
 @dataclass
@@ -38,10 +106,13 @@ class Libgen:
             self.session.close()
 
     def search_title(self) -> list[Book]:
-        results = self.search.search_title_filtered(
-            query=self.title,
-            filters={"extension": "epub"},
-        )
+        # Suprime mensagens "No results table found on search page"
+        # sem afetar as progress bars do Rich
+        with suppress_libgen_output():
+            results = self.search.search_title_filtered(
+                query=self.title,
+                filters={"extension": "epub"},
+            )
         return filter_results(results, self.author)
 
     def download(self, folder: Path, book: Book, max_retries: int = 5, logger: Optional[logging.Logger] = None) -> DownloadResult:

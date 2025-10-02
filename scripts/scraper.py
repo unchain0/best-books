@@ -4,7 +4,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TaskID
+from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TaskID
 from rich.panel import Panel
 from rich.text import Text
 from .libgen import Libgen, DownloadResult
@@ -46,23 +46,24 @@ class Scraper:
 
     def _get_all_lists(self) -> list[tuple[str, str]]:
         """Obtém todas as listas de livros do site"""
-        with self.console.status("[bold cyan]🔍 Buscando listas de livros...", spinner="dots"):
-            self.logger.info("Buscando listas de livros")
-            resp = requests.get(self.base_url)
-            resp.encoding = 'utf-8'  # Força encoding UTF-8
-            soup = bs4.BeautifulSoup(resp.text, "html.parser")
+        self.console.print("[bold cyan]🔍 Buscando listas de livros...[/bold cyan]")
+        self.logger.info("Buscando listas de livros")
+        
+        resp = requests.get(self.base_url)
+        resp.encoding = 'utf-8'  # Força encoding UTF-8
+        soup = bs4.BeautifulSoup(resp.text, "html.parser")
 
-            # Encontra todos os links de listas
-            list_links = soup.find_all("a", class_="button-2")
+        # Encontra todos os links de listas
+        list_links = soup.find_all("a", class_="button-2")
 
-            lists = []
-            for link in list_links:
-                title = link.text.strip()
-                url = link.get("href")
-                # Garante que url é string antes de usar
-                if url and isinstance(url, str) and url.startswith("/list/"):
-                    full_url = self.base_url.rstrip("/") + url
-                    lists.append((title, full_url))
+        lists = []
+        for link in list_links:
+            title = link.text.strip()
+            url = link.get("href")
+            # Garante que url é string antes de usar
+            if url and isinstance(url, str) and url.startswith("/list/"):
+                full_url = self.base_url.rstrip("/") + url
+                lists.append((title, full_url))
 
         self.console.print(f"[green]✔[/green] Encontradas [bold]{len(lists)}[/bold] listas")
         self.logger.info(f"Encontradas {len(lists)} listas")
@@ -126,7 +127,7 @@ class Scraper:
             self.logger.error(f"Erro ao baixar {book.title}: {e}")
             return DownloadResult(success=False, error=str(e))
 
-    def _process_list(self, list_title: str, list_url: str, progress: Progress, task_id: TaskID) -> None:
+    def _process_list(self, list_title: str, list_url: str, progress: Progress) -> None:
         """Processa uma lista completa: extrai e baixa todos os livros"""
         self.logger.info(f"Processando lista: {list_title}")
         
@@ -140,14 +141,16 @@ class Scraper:
 
         if not books:
             self.logger.warning("Nenhum livro encontrado nesta lista")
-            progress.update(task_id, total=1, completed=1)
             return
         
         with self.stats_lock:
             self.stats.total_books += len(books)
         
-        # Atualiza progresso da lista
-        progress.update(task_id, total=len(books), description=f"📚 [bold blue]{list_title}[/bold blue]")
+        # Cria a task AGORA que sabemos o total (não antes)
+        task_id = progress.add_task(
+            f"📚 [bold blue]{list_title}[/bold blue]",
+            total=len(books)
+        )
             
         # Baixa livros em paralelo
         with ThreadPoolExecutor(max_workers=self.perf_config.downloads_per_list) as executor:
@@ -192,6 +195,7 @@ class Scraper:
                 raise
         
         self.logger.info(f"Lista '{list_title}' concluída")
+        # Marca como concluída
         progress.update(task_id, description=f"✔ [green]{list_title}[/green]")
 
     def _print_summary(self) -> None:
@@ -243,24 +247,15 @@ class Scraper:
 
             # Progress bar consolidada para todas as listas
             with Progress(
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
-                BarColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=40, complete_style="green", finished_style="green", pulse_style="green"),
                 TaskProgressColumn(),
-                TextColumn("•"),
                 TimeElapsedColumn(),
                 console=self.console,
+                refresh_per_second=2,  # Atualiza apenas 2x por segundo (menos pisca-pisca)
+                transient=False,  # Não limpa as linhas ao terminar
                 expand=False
             ) as progress:
-                
-                # Cria tasks para cada lista
-                list_tasks: dict[str, TaskID] = {}
-                for list_title, _ in lists:
-                    task_id = progress.add_task(
-                        f"⏳ [dim]{list_title}[/dim]",
-                        total=None  # Será atualizado quando soubermos o total
-                    )
-                    list_tasks[list_title] = task_id
                 
                 # Processa listas em paralelo
                 with ThreadPoolExecutor(max_workers=self.perf_config.list_workers) as list_executor:
@@ -270,8 +265,7 @@ class Scraper:
                             self._process_list, 
                             list_title, 
                             list_url,
-                            progress,
-                            list_tasks[list_title]
+                            progress
                         ): list_title
                         for list_title, list_url in lists
                     }

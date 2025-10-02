@@ -9,6 +9,7 @@ Features:
 - Logging detalhado em arquivo
 - Estatísticas completas ao final
 """
+
 from scripts.scraper import run_scraper
 
 
