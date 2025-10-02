@@ -62,8 +62,9 @@ def calculate_optimal_workers() -> PerformanceConfig:
         list_workers = 2
 
     # Calcula downloads por lista
-    # Regra: distribuir cores entre listas, mas não ultrapassar 10 downloads totais
-    max_total_downloads = 10  # Limite conservador para não sobrecarregar rede
+    # Regra: distribuir cores entre listas, mas não ultrapassar 6 downloads totais
+    # Reduzido para evitar rate limiting do Libgen (HTTP 500 errors)
+    max_total_downloads = 6  # Limite conservador para não sobrecarregar rede e evitar rate limiting
 
     # Downloads por lista baseado em cores disponíveis
     if cpu_cores <= 2:
@@ -90,28 +91,22 @@ def calculate_optimal_workers() -> PerformanceConfig:
         cpu_cores=cpu_cores,
         list_workers=list_workers,
         downloads_per_list=downloads_per_list,
-        total_concurrent_downloads=total_concurrent,
+        total_concurrent_downloads=total_concurrent
     )
 
 
 def get_performance_summary(config: PerformanceConfig) -> str:
     """
     Retorna um resumo legível da configuração de performance
-
+    
     Args:
         config: Configuração de performance
-
+        
     Returns:
         String formatada com informações de performance
     """
-    efficiency = (
-        "Alta"
-        if config.total_concurrent_downloads >= 8
-        else "Moderada"
-        if config.total_concurrent_downloads >= 4
-        else "Conservadora"
-    )
-
+    efficiency = "Alta" if config.total_concurrent_downloads >= 6 else "Moderada" if config.total_concurrent_downloads >= 3 else "Conservadora"
+    
     return f"""
 ⚙️  Configuração de Performance:
    • CPU Cores detectados: {config.cpu_cores}

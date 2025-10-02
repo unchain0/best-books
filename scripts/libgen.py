@@ -7,9 +7,9 @@ from pathlib import Path
 import time
 from typing import Optional
 from dataclasses import dataclass
-import logging
 from contextlib import contextmanager
 import sys
+from loguru import logger
 
 
 @contextmanager
@@ -115,7 +115,7 @@ class Libgen:
             )
         return filter_results(results, self.author)
 
-    def download(self, folder: Path, book: Book, max_retries: int = 5, logger: Optional[logging.Logger] = None) -> DownloadResult:
+    def download(self, folder: Path, book: Book, max_retries: int = 3) -> DownloadResult:
         """
         Baixa o livro para a pasta especificada com timeout e retry
 
@@ -123,7 +123,6 @@ class Libgen:
             folder: Pasta onde salvar o arquivo
             book: Livro a ser baixado
             max_retries: Número máximo de tentativas em caso de falha
-            logger: Logger para registrar informações detalhadas
 
         Returns:
             DownloadResult com informações sobre o download
@@ -141,8 +140,7 @@ class Libgen:
 
         # Verifica se o arquivo já existe
         if filepath.exists():
-            if logger:
-                logger.info(f"Arquivo já existe: {safe_filename}.epub")
+            logger.info(f"Arquivo já existe: {safe_filename}.epub")
             return DownloadResult(
                 success=True,
                 already_existed=True,
@@ -155,7 +153,7 @@ class Libgen:
                 download_start = time.time()
                 resp = self.session.get(
                     book.resolved_download_link,
-                    timeout=(30, 180),  # (connect timeout, read timeout)
+                    timeout=(15, 60),  # (connect timeout 15s, read timeout 60s)
                     stream=True,
                 )
                 resp.raise_for_status()
@@ -172,9 +170,8 @@ class Libgen:
                             total_size += len(chunk)
 
                 duration = time.time() - start_time
-                if logger:
-                    speed_mbps = (total_size / (1024 * 1024)) / (time.time() - download_start) if (time.time() - download_start) > 0 else 0
-                    logger.info(f"Download concluído: {safe_filename}.epub ({total_size / (1024*1024):.2f} MB, {speed_mbps:.2f} MB/s)")
+                speed_mbps = (total_size / (1024 * 1024)) / (time.time() - download_start) if (time.time() - download_start) > 0 else 0
+                logger.info(f"Download concluído: {safe_filename}.epub ({total_size / (1024*1024):.2f} MB, {speed_mbps:.2f} MB/s)")
                 
                 return DownloadResult(
                     success=True,
@@ -188,19 +185,17 @@ class Libgen:
                     filepath.unlink()
 
                 error_msg = f"{type(e).__name__}: {str(e)}"
-                if logger:
-                    logger.warning(f"Tentativa {attempt + 1}/{max_retries} falhou: {error_msg}")
+                logger.warning(f"Tentativa {attempt + 1}/{max_retries} falhou: {error_msg}")
                 
                 if attempt < max_retries - 1:
-                    wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s, 8s
-                    if logger:
-                        logger.info(f"Aguardando {wait_time}s antes de tentar novamente...")
+                    # Backoff mais agressivo para evitar rate limiting
+                    wait_time = (2**attempt) * 2  # 2s, 4s, 8s
+                    logger.info(f"Aguardando {wait_time}s antes de tentar novamente...")
                     time.sleep(wait_time)
                 else:
                     # Última tentativa falhou
                     duration = time.time() - start_time
-                    if logger:
-                        logger.error(f"Download falhou após {max_retries} tentativas: {safe_filename}.epub")
+                    logger.error(f"Download falhou após {max_retries} tentativas: {safe_filename}.epub")
                     return DownloadResult(
                         success=False,
                         duration=duration,

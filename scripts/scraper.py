@@ -4,7 +4,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from rich.console import Console
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TaskID
+from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from rich.panel import Panel
 from rich.text import Text
 from .libgen import Libgen, DownloadResult
@@ -12,6 +12,7 @@ from .utils import slugify, BookInfo
 from .logger import setup_logger
 from .stats import DownloadStats
 from .performance import calculate_optimal_workers, PerformanceConfig
+from loguru import logger
 
 
 class Scraper:
@@ -34,8 +35,8 @@ class Scraper:
         # Rich console
         self.console = Console()
         
-        # Logger e estatísticas
-        self.logger = setup_logger()
+        # Configura Loguru e estatísticas
+        setup_logger()
         self.stats = DownloadStats()
         
         # Lock para atualizações thread-safe de estatísticas
@@ -47,7 +48,7 @@ class Scraper:
     def _get_all_lists(self) -> list[tuple[str, str]]:
         """Obtém todas as listas de livros do site"""
         self.console.print("[bold cyan]🔍 Buscando listas de livros...[/bold cyan]")
-        self.logger.info("Buscando listas de livros")
+        logger.info("Buscando listas de livros")
         
         resp = requests.get(self.base_url)
         resp.encoding = 'utf-8'  # Força encoding UTF-8
@@ -66,12 +67,12 @@ class Scraper:
                 lists.append((title, full_url))
 
         self.console.print(f"[green]✔[/green] Encontradas [bold]{len(lists)}[/bold] listas")
-        self.logger.info(f"Encontradas {len(lists)} listas")
+        logger.info(f"Encontradas {len(lists)} listas")
         return lists
 
     def _get_books_from_list(self, list_url: str) -> list[BookInfo]:
         """Extrai os livros de uma lista específica"""
-        self.logger.info(f"Acessando lista: {list_url}")
+        logger.info(f"Acessando lista: {list_url}")
         resp = requests.get(list_url)
         resp.encoding = 'utf-8'  # Força encoding UTF-8
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
@@ -95,52 +96,52 @@ class Scraper:
                 BookInfo(title=title_elem.text.strip(), author=author_elem.text.strip())
             )
 
-        self.logger.info(f"Encontrados {len(books)} livros")
+        logger.info(f"Encontrados {len(books)} livros")
         return books
 
     def _download_book(self, book: BookInfo, folder: Path) -> DownloadResult:
         """Baixa um livro usando a classe Libgen"""
         try:
-            self.logger.info(f"Buscando: {book.title} ({book.author})")
+            logger.info(f"Buscando: {book.title} ({book.author})")
 
             # Busca o livro no Libgen
             libgen = Libgen(title=book.title, author=book.author)
             results = libgen.search_title()
 
             if not results:
-                self.logger.warning(f"Livro não encontrado no Libgen: {book.title}")
+                logger.warning(f"Livro não encontrado no Libgen: {book.title}")
                 return DownloadResult(success=False, error="Não encontrado")
 
             # Baixa o primeiro resultado
-            self.logger.info(f"Baixando: {book.title}")
-            result = libgen.download(folder, results[0], logger=self.logger)
+            logger.info(f"Baixando: {book.title}")
+            result = libgen.download(folder, results[0])
             
             return result
 
         except requests.exceptions.Timeout:
-            self.logger.error(f"Timeout ao baixar: {book.title}")
+            logger.error(f"Timeout ao baixar: {book.title}")
             return DownloadResult(success=False, error="Timeout")
         except requests.exceptions.HTTPError as e:
-            self.logger.error(f"Erro HTTP ao baixar {book.title}: {e}")
+            logger.error(f"Erro HTTP ao baixar {book.title}: {e}")
             return DownloadResult(success=False, error=str(e))
         except Exception as e:
-            self.logger.error(f"Erro ao baixar {book.title}: {e}")
+            logger.error(f"Erro ao baixar {book.title}: {e}")
             return DownloadResult(success=False, error=str(e))
 
     def _process_list(self, list_title: str, list_url: str, progress: Progress) -> None:
         """Processa uma lista completa: extrai e baixa todos os livros"""
-        self.logger.info(f"Processando lista: {list_title}")
+        logger.info(f"Processando lista: {list_title}")
         
         # Cria pasta para a lista
         list_folder = self.books_dir / slugify(list_title)
         list_folder.mkdir(exist_ok=True)
-        self.logger.info(f"Pasta: {list_folder}")
+        logger.info(f"Pasta: {list_folder}")
 
         # Obtém livros da lista
         books = self._get_books_from_list(list_url)
 
         if not books:
-            self.logger.warning("Nenhum livro encontrado nesta lista")
+            logger.warning("Nenhum livro encontrado nesta lista")
             return
         
         with self.stats_lock:
@@ -180,7 +181,7 @@ class Scraper:
                                 self.stats.add_failed()
                     
                     except Exception as e:
-                        self.logger.error(f"Erro inesperado ao processar {book.title}: {e}")
+                        logger.error(f"Erro inesperado ao processar {book.title}: {e}")
                         with self.stats_lock:
                             self.stats.add_failed()
                     
@@ -194,7 +195,7 @@ class Scraper:
                 executor.shutdown(wait=False)
                 raise
         
-        self.logger.info(f"Lista '{list_title}' concluída")
+        logger.info(f"Lista '{list_title}' concluída")
         # Marca como concluída
         progress.update(task_id, description=f"✔ [green]{list_title}[/green]")
 
@@ -212,7 +213,7 @@ class Scraper:
         # Informações adicionais
         self.console.print(f"[cyan]📁 Pasta de downloads:[/cyan] [bold]{self.books_dir.absolute()}[/bold]")
         self.console.print("[cyan]📝 Arquivo de log:[/cyan] [bold]logs/[/bold]")
-        self.logger.info("Processo concluído")
+        logger.info("Processo concluído")
 
     def run(self) -> None:
         """Executa o scraping e download completo de todas as listas"""
@@ -232,10 +233,6 @@ class Scraper:
             self.console.print(f"   [dim]•[/dim] Listas processadas simultaneamente: [bold green]{self.perf_config.list_workers}[/bold green]")
             self.console.print(f"   [dim]•[/dim] Downloads por lista: [bold green]{self.perf_config.downloads_per_list}[/bold green]")
             self.console.print(f"   [dim]•[/dim] Total de downloads simultâneos: [bold green]{self.perf_config.total_concurrent_downloads}[/bold green]")
-            
-            efficiency = "Alta" if self.perf_config.total_concurrent_downloads >= 8 else "Moderada" if self.perf_config.total_concurrent_downloads >= 4 else "Conservadora"
-            efficiency_color = "green" if efficiency == "Alta" else "yellow" if efficiency == "Moderada" else "red"
-            self.console.print(f"   [dim]•[/dim] Eficiência: [bold {efficiency_color}]{efficiency}[/bold {efficiency_color}]")
             self.console.print()
             
             # Cria pasta books/
@@ -277,7 +274,7 @@ class Scraper:
                             try:
                                 future.result()
                             except Exception as e:
-                                self.logger.error(f"Erro ao processar lista {list_title}: {e}")
+                                logger.error(f"Erro ao processar lista {list_title}: {e}")
                     
                     except KeyboardInterrupt:
                         self.console.print("\n[bold yellow]⚠️  Cancelando todas as listas...[/bold yellow]")
@@ -304,7 +301,7 @@ class Scraper:
             self.stats.display_summary(self.console)
             
             self.console.print("\n[cyan]📝 Logs completos:[/cyan] [bold]logs/[/bold]")
-            self.logger.info("Processo cancelado pelo usuário (Ctrl+C)")
+            logger.info("Processo cancelado pelo usuário (Ctrl+C)")
             
             # Re-levanta a exceção para sair do programa
             raise
