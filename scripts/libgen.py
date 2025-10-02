@@ -5,6 +5,19 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 from .utils import filter_results, get_author, get_title
 from pathlib import Path
 import time
+from typing import Optional
+from dataclasses import dataclass
+import logging
+
+
+@dataclass
+class DownloadResult:
+    """Resultado de um download"""
+    success: bool
+    already_existed: bool = False
+    duration: float = 0.0  # segundos
+    size: int = 0  # bytes
+    error: Optional[str] = None
 
 
 class Libgen:
@@ -31,7 +44,7 @@ class Libgen:
         )
         return filter_results(results, self.author)
 
-    def download(self, folder: Path, book: Book, max_retries: int = 5) -> bool:
+    def download(self, folder: Path, book: Book, max_retries: int = 5, logger: Optional[logging.Logger] = None) -> DownloadResult:
         """
         Baixa o livro para a pasta especificada com timeout e retry
 
@@ -39,10 +52,12 @@ class Libgen:
             folder: Pasta onde salvar o arquivo
             book: Livro a ser baixado
             max_retries: Número máximo de tentativas em caso de falha
+            logger: Logger para registrar informações detalhadas
 
         Returns:
-            True se o download foi realizado, False se o arquivo já existia
+            DownloadResult com informações sobre o download
         """
+        start_time = time.time()
         book.resolve_direct_download_link()
 
         # Sanitiza o nome do arquivo (remove caracteres inválidos)
@@ -55,12 +70,18 @@ class Libgen:
 
         # Verifica se o arquivo já existe
         if filepath.exists():
-            print("    ⏭️  Arquivo já existe, pulando download")
-            return False
+            if logger:
+                logger.info(f"Arquivo já existe: {safe_filename}.epub")
+            return DownloadResult(
+                success=True,
+                already_existed=True,
+                size=filepath.stat().st_size
+            )
 
         # Download com timeout, streaming e retry
         for attempt in range(max_retries):
             try:
+                download_start = time.time()
                 resp = self.session.get(
                     book.resolved_download_link,
                     timeout=(30, 180),  # (connect timeout, read timeout)
@@ -69,6 +90,7 @@ class Libgen:
                 resp.raise_for_status()
 
                 # Buffer maior para escrita mais rápida
+                total_size = 0
                 with open(filepath, "wb", buffering=1024 * 1024) as f:
                     # Chunk maior = menos overhead, download mais rápido
                     for chunk in resp.iter_content(
@@ -76,28 +98,46 @@ class Libgen:
                     ):  # 1MB chunks
                         if chunk:
                             f.write(chunk)
+                            total_size += len(chunk)
 
-                return True
+                duration = time.time() - start_time
+                if logger:
+                    speed_mbps = (total_size / (1024 * 1024)) / (time.time() - download_start) if (time.time() - download_start) > 0 else 0
+                    logger.info(f"Download concluído: {safe_filename}.epub ({total_size / (1024*1024):.2f} MB, {speed_mbps:.2f} MB/s)")
+                
+                return DownloadResult(
+                    success=True,
+                    duration=duration,
+                    size=total_size
+                )
 
             except (Timeout, ConnectionError, ChunkedEncodingError, Exception) as e:
                 # Remove arquivo parcial em caso de erro
                 if filepath.exists():
                     filepath.unlink()
 
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                if logger:
+                    logger.warning(f"Tentativa {attempt + 1}/{max_retries} falhou: {error_msg}")
+                
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Backoff exponencial: 1s, 2s, 4s, 8s
-                    print(
-                        f"    🔄 Erro (tentativa {attempt + 1}/{max_retries}): {type(e).__name__}"
-                    )
-                    print(
-                        f"    ⏳ Aguardando {wait_time}s antes de tentar novamente..."
-                    )
+                    if logger:
+                        logger.info(f"Aguardando {wait_time}s antes de tentar novamente...")
                     time.sleep(wait_time)
                 else:
-                    # Última tentativa falhou, relança a exceção
-                    raise
+                    # Última tentativa falhou
+                    duration = time.time() - start_time
+                    if logger:
+                        logger.error(f"Download falhou após {max_retries} tentativas: {safe_filename}.epub")
+                    return DownloadResult(
+                        success=False,
+                        duration=duration,
+                        error=error_msg
+                    )
 
-        return True
+        # Não deve chegar aqui, mas por garantia
+        return DownloadResult(success=False, error="Erro desconhecido")
 
 
 if __name__ == "__main__":

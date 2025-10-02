@@ -9,6 +9,8 @@ dependencies = [
     "libgen-api-enhanced>=1.2.1",
     "lxml>=6.0.2",
     "requests>=2.32.5",
+    "rich>=13.7.0",
+    "psutil>=6.1.0",
 ]
 
 [dependency-groups]
@@ -17,6 +19,7 @@ dev = [
     "pytest>=8.4.2",
     "ruff>=0.13.2",
     "types-requests>=2.32.4.20250913",
+    "types-psutil>=6.1.0.20250102",
 ]
 
 [tool.pytest.ini_options]
