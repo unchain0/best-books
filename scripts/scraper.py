@@ -2,6 +2,7 @@ import bs4
 import requests
 from pathlib import Path
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .libgen import Libgen
 from .utils import slugify, BookInfo
 
@@ -9,17 +10,19 @@ from .utils import slugify, BookInfo
 class Scraper:
     """Classe para web scraping do site best-books.dev"""
 
-    def __init__(self, base_url: str = "https://www.best-books.dev/"):
+    def __init__(self, base_url: str = "https://www.best-books.dev/", max_workers: int = 3):
         """
         Inicializa o scraper
 
         Args:
             base_url: URL base do site a ser raspado
+            max_workers: Número de downloads simultâneos (padrão: 3)
         """
         self.base_url = base_url
         self.books_dir = Path("books")
         self.total_downloaded = 0
         self.total_failed = 0
+        self.max_workers = max_workers
 
     def _get_all_lists(self) -> list[tuple[str, str]]:
         """Obtém todas as listas de livros do site"""
@@ -72,9 +75,11 @@ class Scraper:
         print(f"  ✓ Encontrados {len(books)} livros")
         return books
 
-    def _download_book(self, book: BookInfo, folder: Path) -> bool:
+    def _download_book(self, book: BookInfo, folder: Path, index: int = 0, total: int = 0) -> bool:
         """Baixa um livro usando a classe Libgen"""
         try:
+            if index and total:
+                print(f"\n  [{index}/{total}]")
             print(f"    🔍 Buscando: {book.title} ({book.author})")
 
             # Busca o livro no Libgen
@@ -128,21 +133,32 @@ class Scraper:
             print("  ⚠️  Nenhum livro encontrado nesta lista")
             return
 
-        # Baixa cada livro
-        for i, book in enumerate(books, 1):
-            print(f"\n  [{i}/{len(books)}]")
-
-            if self._download_book(book, list_folder):
-                self.total_downloaded += 1
-            else:
-                self.total_failed += 1
-
-            # Aguarda entre downloads
-            if i < len(books):
-                time.sleep(2)
-
-        # Aguarda entre listas
-        time.sleep(3)
+        # Baixa livros em paralelo
+        print(f"\n🚀 Iniciando {self.max_workers} downloads paralelos...\n")
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submete todos os downloads
+            future_to_book = {
+                executor.submit(self._download_book, book, list_folder, i, len(books)): (i, book)
+                for i, book in enumerate(books, 1)
+            }
+            
+            # Processa resultados conforme completam
+            for future in as_completed(future_to_book):
+                i, book = future_to_book[future]
+                
+                try:
+                    if future.result():
+                        self.total_downloaded += 1
+                    else:
+                        self.total_failed += 1
+                except Exception as e:
+                    print(f"\n  [{i}/{len(books)}] {book.title}")
+                    print(f"    ❌ Erro inesperado: {e}")
+                    self.total_failed += 1
+        
+        print(f"\n✓ Lista '{list_title}' concluída!")
+        time.sleep(1)  # Pequena pausa entre listas
 
     def _print_summary(self) -> None:
         """Imprime resumo final do processo"""
