@@ -15,61 +15,68 @@ from loguru import logger
 @contextmanager
 def suppress_libgen_output():
     """Suprime apenas prints específicos da biblioteca libgen-api-enhanced"""
-    
+
     # Cria um wrapper para stdout/stderr que filtra mensagens específicas
     class FilteredWriter:
         def __init__(self, original_stream):
             self.original_stream = original_stream
             self.buffer = ""
-            
+
         def write(self, text):
             # Bloqueia mensagens específicas da biblioteca libgen-api-enhanced
-            if text and any(msg in text for msg in [
+            if text and any(
+                msg in text
+                for msg in [
+                    "No results table found",
+                    "Error during search page retrieval",
+                    "HTTP error 500",
+                    "Connection broken",
+                    "IncompleteRead",
+                ]
+            ):
+                return len(text)
+            # Passa tudo o resto para o stream original
+            return self.original_stream.write(text)
+
+        def flush(self):
+            self.original_stream.flush()
+
+        def __getattr__(self, name):
+            # Delega outros atributos para o stream original
+            return getattr(self.original_stream, name)
+
+    # Salva streams originais
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+
+    # Salva print original
+    import builtins
+
+    original_print = builtins.print
+
+    def filtered_print(*args, **kwargs):
+        text = " ".join(str(arg) for arg in args)
+        # Bloqueia mensagens de erro da biblioteca libgen
+        if not any(
+            msg in text
+            for msg in [
                 "No results table found",
                 "Error during search page retrieval",
                 "HTTP error 500",
                 "Connection broken",
-                "IncompleteRead"
-            ]):
-                return len(text)
-            # Passa tudo o resto para o stream original
-            return self.original_stream.write(text)
-        
-        def flush(self):
-            self.original_stream.flush()
-        
-        def __getattr__(self, name):
-            # Delega outros atributos para o stream original
-            return getattr(self.original_stream, name)
-    
-    # Salva streams originais
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    
-    # Salva print original
-    import builtins
-    original_print = builtins.print
-    
-    def filtered_print(*args, **kwargs):
-        text = ' '.join(str(arg) for arg in args)
-        # Bloqueia mensagens de erro da biblioteca libgen
-        if not any(msg in text for msg in [
-            "No results table found",
-            "Error during search page retrieval",
-            "HTTP error 500",
-            "Connection broken",
-            "IncompleteRead"
-        ]):
+                "IncompleteRead",
+            ]
+        ):
             original_print(*args, **kwargs)
-    
+
     try:
         # Substitui stdout/stderr com versões filtradas
         sys.stdout = FilteredWriter(old_stdout)
         sys.stderr = FilteredWriter(old_stderr)
-        
+
         # Substitui print builtin
         builtins.print = filtered_print
-        
+
         yield
     finally:
         # Restaura tudo
@@ -81,6 +88,7 @@ def suppress_libgen_output():
 @dataclass
 class DownloadResult:
     """Resultado de um download"""
+
     success: bool
     already_existed: bool = False
     duration: float = 0.0  # segundos
@@ -109,13 +117,12 @@ class Libgen:
         # Suprime mensagens "No results table found on search page"
         # sem afetar as progress bars do Rich
         with suppress_libgen_output():
-            results = self.search.search_title_filtered(
-                query=self.title,
-                filters={"extension": "epub"},
-            )
+            results = self.search.search_title_filtered(query=self.title)
         return filter_results(results, self.author)
 
-    def download(self, folder: Path, book: Book, max_retries: int = 3) -> DownloadResult:
+    def download(
+        self, folder: Path, book: Book, max_retries: int = 3
+    ) -> DownloadResult:
         """
         Baixa o livro para a pasta especificada com timeout e retry
 
@@ -142,9 +149,7 @@ class Libgen:
         if filepath.exists():
             logger.info(f"Arquivo já existe: {safe_filename}.epub")
             return DownloadResult(
-                success=True,
-                already_existed=True,
-                size=filepath.stat().st_size
+                success=True, already_existed=True, size=filepath.stat().st_size
             )
 
         # Download com timeout, streaming e retry
@@ -170,14 +175,16 @@ class Libgen:
                             total_size += len(chunk)
 
                 duration = time.time() - start_time
-                speed_mbps = (total_size / (1024 * 1024)) / (time.time() - download_start) if (time.time() - download_start) > 0 else 0
-                logger.info(f"Download concluído: {safe_filename}.epub ({total_size / (1024*1024):.2f} MB, {speed_mbps:.2f} MB/s)")
-                
-                return DownloadResult(
-                    success=True,
-                    duration=duration,
-                    size=total_size
+                speed_mbps = (
+                    (total_size / (1024 * 1024)) / (time.time() - download_start)
+                    if (time.time() - download_start) > 0
+                    else 0
                 )
+                logger.info(
+                    f"Download concluído: {safe_filename}.epub ({total_size / (1024 * 1024):.2f} MB, {speed_mbps:.2f} MB/s)"
+                )
+
+                return DownloadResult(success=True, duration=duration, size=total_size)
 
             except (Timeout, ConnectionError, ChunkedEncodingError, Exception) as e:
                 # Remove arquivo parcial em caso de erro
@@ -185,8 +192,10 @@ class Libgen:
                     filepath.unlink()
 
                 error_msg = f"{type(e).__name__}: {str(e)}"
-                logger.warning(f"Tentativa {attempt + 1}/{max_retries} falhou: {error_msg}")
-                
+                logger.warning(
+                    f"Tentativa {attempt + 1}/{max_retries} falhou: {error_msg}"
+                )
+
                 if attempt < max_retries - 1:
                     # Backoff mais agressivo para evitar rate limiting
                     wait_time = (2**attempt) * 2  # 2s, 4s, 8s
@@ -195,11 +204,11 @@ class Libgen:
                 else:
                     # Última tentativa falhou
                     duration = time.time() - start_time
-                    logger.error(f"Download falhou após {max_retries} tentativas: {safe_filename}.epub")
+                    logger.error(
+                        f"Download falhou após {max_retries} tentativas: {safe_filename}.epub"
+                    )
                     return DownloadResult(
-                        success=False,
-                        duration=duration,
-                        error=error_msg
+                        success=False, duration=duration, error=error_msg
                     )
 
         # Não deve chegar aqui, mas por garantia
