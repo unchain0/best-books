@@ -61,7 +61,7 @@ uv run python main.py
 **⚠️ IMPORTANTE:** O sistema baixa automaticamente **TODAS** as listas e **TODOS** os livros do site best-books.dev. Não há opções de limitação. Certifique-se de ter:
 
 - Conexão estável com internet
-- Espaço suficiente em disco (pode ser vários GB)
+- Espaço suficiente em disco (pelo menos 2GB)
 - Tempo disponível (o processo pode levar horas)
 
 ## 🛠️ Estrutura do Projeto
@@ -128,10 +128,6 @@ uv run pytest tests/test_scraper.py -v
 # Testes de rede (que fazem requisições reais)
 uv run pytest -m "network" -v
 ```
-
-### Mais informações
-
-Consulte [tests/README.md](tests/README.md) para documentação completa dos testes.
 
 ## 🔄 Como Funciona
 
