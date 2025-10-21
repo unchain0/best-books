@@ -117,7 +117,10 @@ class Libgen:
         # Suprime mensagens "No results table found on search page"
         # sem afetar as progress bars do Rich
         with suppress_libgen_output():
-            results = self.search.search_title_filtered(query=self.title)
+            results = self.search.search_title_filtered(
+                query=self.title,
+                filters={"extension": "epub"},
+            )
         return filter_results(results, self.author)
 
     def download(
