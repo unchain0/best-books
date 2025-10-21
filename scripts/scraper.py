@@ -4,7 +4,13 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from rich.console import Console
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeElapsedColumn,
+)
 from rich.panel import Panel
 from rich.text import Text
 from .libgen import Libgen, DownloadResult
@@ -18,7 +24,11 @@ from loguru import logger
 class Scraper:
     """Classe para web scraping do site best-books.dev"""
 
-    def __init__(self, base_url: str = "https://www.best-books.dev/", perf_config: PerformanceConfig | None = None):
+    def __init__(
+        self,
+        base_url: str = "https://www.best-books.dev/",
+        perf_config: PerformanceConfig | None = None,
+    ):
         """
         Inicializa o scraper
 
@@ -28,20 +38,20 @@ class Scraper:
         """
         self.base_url = base_url
         self.books_dir = Path("books")
-        
+
         # Calcula workers ideais baseado no hardware
         self.perf_config = perf_config or calculate_optimal_workers()
-        
+
         # Rich console
         self.console = Console()
-        
+
         # Configura Loguru e estatísticas
         setup_logger()
         self.stats = DownloadStats()
-        
+
         # Lock para atualizações thread-safe de estatísticas
         self.stats_lock = Lock()
-        
+
         # Progresso de listas (dict thread-safe)
         self.list_progress: dict[str, dict[str, int]] = {}
 
@@ -49,9 +59,9 @@ class Scraper:
         """Obtém todas as listas de livros do site"""
         self.console.print("[bold cyan]🔍 Buscando listas de livros...[/bold cyan]")
         logger.info("Buscando listas de livros")
-        
+
         resp = requests.get(self.base_url)
-        resp.encoding = 'utf-8'  # Força encoding UTF-8
+        resp.encoding = "utf-8"  # Força encoding UTF-8
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
 
         # Encontra todos os links de listas
@@ -66,7 +76,9 @@ class Scraper:
                 full_url = self.base_url.rstrip("/") + url
                 lists.append((title, full_url))
 
-        self.console.print(f"[green]✔[/green] Encontradas [bold]{len(lists)}[/bold] listas")
+        self.console.print(
+            f"[green]✔[/green] Encontradas [bold]{len(lists)}[/bold] listas"
+        )
         logger.info(f"Encontradas {len(lists)} listas")
         return lists
 
@@ -74,7 +86,7 @@ class Scraper:
         """Extrai os livros de uma lista específica"""
         logger.info(f"Acessando lista: {list_url}")
         resp = requests.get(list_url)
-        resp.encoding = 'utf-8'  # Força encoding UTF-8
+        resp.encoding = "utf-8"  # Força encoding UTF-8
         soup = bs4.BeautifulSoup(resp.text, "html.parser")
 
         books = []
@@ -105,7 +117,7 @@ class Scraper:
             logger.info(f"Buscando: {book.title} ({book.author})")
 
             # Busca o livro no Libgen
-            libgen = Libgen(title=book.title, author=book.author)
+            libgen = Libgen(mirror="gl", title=book.title, author=book.author)
             results = libgen.search_title()
 
             if not results:
@@ -115,7 +127,7 @@ class Scraper:
             # Baixa o primeiro resultado
             logger.info(f"Baixando: {book.title}")
             result = libgen.download(folder, results[0])
-            
+
             return result
 
         except requests.exceptions.Timeout:
@@ -131,7 +143,7 @@ class Scraper:
     def _process_list(self, list_title: str, list_url: str, progress: Progress) -> None:
         """Processa uma lista completa: extrai e baixa todos os livros"""
         logger.info(f"Processando lista: {list_title}")
-        
+
         # Cria pasta para a lista
         list_folder = self.books_dir / slugify(list_title)
         list_folder.mkdir(exist_ok=True)
@@ -143,58 +155,66 @@ class Scraper:
         if not books:
             logger.warning("Nenhum livro encontrado nesta lista")
             return
-        
+
         with self.stats_lock:
             self.stats.total_books += len(books)
-        
+
         # Cria a task AGORA que sabemos o total (não antes)
         task_id = progress.add_task(
-            f"📚 [bold blue]{list_title}[/bold blue]",
-            total=len(books)
+            f"📚 [bold blue]{list_title}[/bold blue]", total=len(books)
         )
-            
+
         # Baixa livros em paralelo
-        with ThreadPoolExecutor(max_workers=self.perf_config.downloads_per_list) as executor:
+        with ThreadPoolExecutor(
+            max_workers=self.perf_config.downloads_per_list
+        ) as executor:
             # Submete todos os downloads
             future_to_book = {
                 executor.submit(self._download_book, book, list_folder): book
                 for book in books
             }
-                
+
             # Processa resultados conforme completam
             try:
                 for future in as_completed(future_to_book):
                     book = future_to_book[future]
-                    
+
                     try:
                         result: DownloadResult = future.result()
-                        
+
                         with self.stats_lock:
                             if result.success:
                                 if result.already_existed:
                                     self.stats.add_existing()
                                 else:
-                                    self.stats.add_download(result.duration, result.size)
-                            elif result.error and "não encontrado" in result.error.lower():
+                                    self.stats.add_download(
+                                        result.duration, result.size
+                                    )
+                            elif (
+                                result.error
+                                and "não encontrado" in result.error.lower()
+                            ):
                                 self.stats.add_not_found()
                             else:
                                 self.stats.add_failed()
-                    
+
                     except Exception as e:
                         logger.error(f"Erro inesperado ao processar {book.title}: {e}")
                         with self.stats_lock:
                             self.stats.add_failed()
-                    
+
                     progress.update(task_id, advance=1)
-            
+
             except KeyboardInterrupt:
                 # Cancela todas as futures pendentes
-                self.console.print("\n[bold yellow]⚠️  Cancelando downloads...[/bold yellow]")
+                self.console.print(
+                    "\n[bold yellow]⚠️  Cancelando downloads...[/bold yellow]"
+                )
                 for future in future_to_book:
                     future.cancel()
                 executor.shutdown(wait=False)
                 raise
-        
+
         logger.info(f"Lista '{list_title}' concluída")
         # Marca como concluída
         progress.update(task_id, description=f"✔ [green]{list_title}[/green]")
@@ -202,39 +222,55 @@ class Scraper:
     def _print_summary(self) -> None:
         """Imprime resumo final do processo"""
         self.console.print("\n")
-        self.console.print(Panel(
-            Text("🎉 PROCESSO CONCLUÍDO!", justify="center", style="bold green"),
-            border_style="green"
-        ))
-        
+        self.console.print(
+            Panel(
+                Text("🎉 PROCESSO CONCLUÍDO!", justify="center", style="bold green"),
+                border_style="green",
+            )
+        )
+
         # Exibe estatísticas
         self.stats.display_summary(self.console)
-        
+
         # Informações adicionais
-        self.console.print(f"[cyan]📁 Pasta de downloads:[/cyan] [bold]{self.books_dir.absolute()}[/bold]")
+        self.console.print(
+            f"[cyan]📁 Pasta de downloads:[/cyan] [bold]{self.books_dir.absolute()}[/bold]"
+        )
         self.console.print("[cyan]📝 Arquivo de log:[/cyan] [bold]logs/[/bold]")
         logger.info("Processo concluído")
 
     def run(self) -> None:
         """Executa o scraping e download completo de todas as listas"""
         self.stats.start()
-        
+
         try:
             # Banner inicial
-            self.console.print(Panel(
-                Text("📚 Best Books Downloader", justify="center", style="bold cyan"),
-                border_style="cyan"
-            ))
+            self.console.print(
+                Panel(
+                    Text(
+                        "📚 Best Books Downloader", justify="center", style="bold cyan"
+                    ),
+                    border_style="cyan",
+                )
+            )
             self.console.print()
-            
+
             # Exibe configurações de performance
             self.console.print("[bold cyan]⚙️  Configuração de Performance:[/bold cyan]")
-            self.console.print(f"   [dim]•[/dim] CPU Cores detectados: [bold]{self.perf_config.cpu_cores}[/bold]")
-            self.console.print(f"   [dim]•[/dim] Listas processadas simultaneamente: [bold green]{self.perf_config.list_workers}[/bold green]")
-            self.console.print(f"   [dim]•[/dim] Downloads por lista: [bold green]{self.perf_config.downloads_per_list}[/bold green]")
-            self.console.print(f"   [dim]•[/dim] Total de downloads simultâneos: [bold green]{self.perf_config.total_concurrent_downloads}[/bold green]")
+            self.console.print(
+                f"   [dim]•[/dim] CPU Cores detectados: [bold]{self.perf_config.cpu_cores}[/bold]"
+            )
+            self.console.print(
+                f"   [dim]•[/dim] Listas processadas simultaneamente: [bold green]{self.perf_config.list_workers}[/bold green]"
+            )
+            self.console.print(
+                f"   [dim]•[/dim] Downloads por lista: [bold green]{self.perf_config.downloads_per_list}[/bold green]"
+            )
+            self.console.print(
+                f"   [dim]•[/dim] Total de downloads simultâneos: [bold green]{self.perf_config.total_concurrent_downloads}[/bold green]"
+            )
             self.console.print()
-            
+
             # Cria pasta books/
             self.books_dir.mkdir(exist_ok=True)
 
@@ -243,30 +279,35 @@ class Scraper:
             self.console.print()
 
             # Progress bar consolidada para todas as listas
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=40, complete_style="green", finished_style="green", pulse_style="green"),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-                console=self.console,
-                refresh_per_second=2,  # Atualiza apenas 2x por segundo (menos pisca-pisca)
-                transient=False,  # Não limpa as linhas ao terminar
-                expand=False
-            ) as progress:
-                
+            with (
+                Progress(
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(
+                        bar_width=40,
+                        complete_style="green",
+                        finished_style="green",
+                        pulse_style="green",
+                    ),
+                    TaskProgressColumn(),
+                    TimeElapsedColumn(),
+                    console=self.console,
+                    refresh_per_second=2,  # Atualiza apenas 2x por segundo (menos pisca-pisca)
+                    transient=False,  # Não limpa as linhas ao terminar
+                    expand=False,
+                ) as progress
+            ):
                 # Processa listas em paralelo
-                with ThreadPoolExecutor(max_workers=self.perf_config.list_workers) as list_executor:
+                with ThreadPoolExecutor(
+                    max_workers=self.perf_config.list_workers
+                ) as list_executor:
                     # Submete todas as listas
                     futures = {
                         list_executor.submit(
-                            self._process_list, 
-                            list_title, 
-                            list_url,
-                            progress
+                            self._process_list, list_title, list_url, progress
                         ): list_title
                         for list_title, list_url in lists
                     }
-                    
+
                     # Aguarda conclusão
                     try:
                         for future in as_completed(futures):
@@ -274,35 +315,45 @@ class Scraper:
                             try:
                                 future.result()
                             except Exception as e:
-                                logger.error(f"Erro ao processar lista {list_title}: {e}")
-                    
+                                logger.error(
+                                    f"Erro ao processar lista {list_title}: {e}"
+                                )
+
                     except KeyboardInterrupt:
-                        self.console.print("\n[bold yellow]⚠️  Cancelando todas as listas...[/bold yellow]")
+                        self.console.print(
+                            "\n[bold yellow]⚠️  Cancelando todas as listas...[/bold yellow]"
+                        )
                         for future in futures:
                             future.cancel()
                         list_executor.shutdown(wait=False)
                         raise
-            
+
             self.stats.finish()
-            
+
             # Exibe resumo final
             self._print_summary()
-        
+
         except KeyboardInterrupt:
             self.console.print("\n")
-            self.console.print(Panel(
-                Text("❌ PROCESSO CANCELADO PELO USUÁRIO", justify="center", style="bold red"),
-                border_style="red"
-            ))
+            self.console.print(
+                Panel(
+                    Text(
+                        "❌ PROCESSO CANCELADO PELO USUÁRIO",
+                        justify="center",
+                        style="bold red",
+                    ),
+                    border_style="red",
+                )
+            )
             self.stats.finish()
-            
+
             # Exibe estatísticas parciais
             self.console.print("\n[yellow]Estatísticas parciais:[/yellow]")
             self.stats.display_summary(self.console)
-            
+
             self.console.print("\n[cyan]📝 Logs completos:[/cyan] [bold]logs/[/bold]")
             logger.info("Processo cancelado pelo usuário (Ctrl+C)")
-            
+
             # Re-levanta a exceção para sair do programa
             raise
 
