@@ -21,6 +21,7 @@ class TestLibgen:
         assert libgen.author == "Eric Matthes"
         assert libgen.search is not None
 
+    @pytest.mark.network
     def test_libgen_search_self_taught_programmer(self):
         """Testa busca do livro 'The Self-Taught Programmer' do exemplo"""
         libgen = Libgen(title="The Self-Taught Programmer", author="Cory Althoff")

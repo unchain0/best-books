@@ -33,6 +33,7 @@ class TestSlugify:
 class TestScraper:
     """Testes para a classe Scraper"""
 
+    @pytest.mark.network
     def test_scraper_initialization(self):
         """Testa inicialização da classe Scraper"""
         scraper = Scraper()
