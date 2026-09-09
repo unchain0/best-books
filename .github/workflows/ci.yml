@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${+{'ithub.workflow'}}-${{'ithub.ref'}}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,10 +25,16 @@ jobs:
           python-version: '3.13'
 
       - name: Install uv
-      run: pip install uv
+        run: pip install uv
 
-      - name: Install dependences
-      run: uv sync --group dev
+      - name: Install dependencies
+        run: uv sync --group dev
 
       - name: Lint
-      run: uv run ruff check .
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Type check
+        run: uv run mypy .
