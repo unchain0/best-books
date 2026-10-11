@@ -12,3 +12,5 @@ wheels/
 # Project
 books/
 logs/
+# verification evidence (local proofs)
+.cursor/skills/verify-best-books/evidence/
