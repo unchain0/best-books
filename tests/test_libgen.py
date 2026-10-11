@@ -38,6 +38,7 @@ class TestLibgen:
 
         print(f"\n✓ Encontrado: {first_book.title} - {first_book.author}")
 
+    @pytest.mark.network
     def test_libgen_search_python_crash_course(self):
         """Testa busca de outro livro popular"""
         libgen = Libgen(title="Python Crash Course", author="Eric Matthes")
@@ -58,6 +59,7 @@ class TestLibgen:
         else:
             print("\n⚠️  Livro não encontrado (pode não estar no Libgen)")
 
+    @pytest.mark.network
     def test_libgen_search_no_results(self):
         """Testa busca com título inexistente"""
         libgen = Libgen(
