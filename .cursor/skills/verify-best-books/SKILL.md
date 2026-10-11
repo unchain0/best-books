@@ -1,81 +1,119 @@
 ---
 name: verify-best-books
-description: Verify the best-books CLI (scrape best-books.dev, search/download via Libgen). Use when proving unit behavior, CI gates, or offline smoke of scripts without a full download run.
+description: Verify the best-books downloader CLI (scrape best-books.dev, Libgen EPUB search/download). Use when proving offline gates, list scraping, or a single Libgen search without a full multi-hour download run.
 ---
 
 # verify-best-books
 
-Primary surface is a short-lived CLI (`uv run python main.py`) that scrapes best-books.dev and downloads EPUBs from Libgen. A full run hits the live web and can take hours and gigabytes. Default verification is offline unit tests plus the same lint/type gates CI runs. Live network checks are opt-in only.
+## Interview summary (ground truth)
+
+- **Surface.** Short-lived CLI. User entry is `uv run python main.py`, which calls `scripts.scraper.run_scraper()` and downloads every list and every book. No flags, no dry-run, no limit. Secondary surface is the library API (`Scraper`, `Libgen`) used by tests and this harness.
+- **Run.** `uv sync --locked --group dev` then the commands below. Requires Python 3.13. Full product run creates `books/<slug>/…epub` and `logs/download_*.log` in the process cwd. `Scraper.books_dir` is hardcoded to `Path("books")`.
+- **Drive.** Prefer this skill's helper (subprocess + production classes). Pytest is the offline gate matching CI (`.github/workflows/ci.yml` runs `pytest -m "not network and not slow"`). Do not drive a full `main.py` unless the task explicitly demands an end-to-end download proof and you have a disposable cwd.
+- **Observe.** Helper writes under `.cursor/skills/verify-best-books/evidence/<run-id>/`. Capture exit codes, pytest summaries, JSON scrape/search payloads, and log paths when a full run is used.
+- **Isolate.** Full `main.py` is not multi-instance safe against a shared `books/` tree. Refuse to run it in the user's real checkout cwd. For scrape-lists, the helper chdirs into a temp dir so accidental `books/`/`logs/` creation cannot touch the repo. Network mirrors (best-books.dev, Libgen) are shared globals and may flake.
 
 ## Launch
 
-There is no long-lived server. Prepare once per run:
+Prepare once per machine/session from the repo root:
 
 ```bash
 uv sync --locked --group dev
 ```
 
-Ready when `uv run python -c "from scripts.scraper import Scraper, run_scraper; from scripts.libgen import Libgen"` exits 0.
+Ready when doctor exits 0. There is no long-lived server to tear down. Each drive is one helper process.
 
-Full product launch (destructive, live network, long):
-
-```bash
-uv run python main.py
-```
-
-Do not run the full product path unless the task explicitly requires an end-to-end download proof. Prefer mapped offline features first.
+Teardown is the Cleanup section. Never leave a full `main.py` run attached to the user's real `books/`.
 
 ## Doctor
 
 ```bash
-uv run python -c "import sys; assert sys.version_info[:2]==(3,13); from scripts.scraper import Scraper; from scripts.libgen import Libgen; print('ok')"
-uv run ruff check .
-uv run mypy .
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py doctor
 ```
 
-Require exit 0 on each. If any fail, stop and fix before driving features.
+Require exit 0. Checks Python 3.13, imports of `scripts.scraper` / `scripts.libgen` / `scripts.utils`, `ruff check .`, and `mypy .`. Output and evidence path print to stdout; body is also at `evidence/<run-id>/doctor.txt`.
+
+If doctor fails, stop. Fix the tree before any feature drive.
 
 ## Drive
 
-Offline (default, matches CI test step):
+Harness binary (always via uv):
 
 ```bash
-uv run pytest -m "not network and not slow"
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py <command> [--run-id <id>]
 ```
 
-Live network (manual only, flaky if Libgen or best-books.dev is down):
+Commands:
+
+| Command | Network | What it proves |
+| --- | --- | --- |
+| `doctor` | no | toolchain + imports + lint/types |
+| `offline` | no | CI test selection |
+| `scrape-lists [--max-lists N]` | yes (best-books.dev) | production `Scraper._get_all_lists` + `_get_books_from_list` |
+| `libgen-search [--title T] [--author A]` | yes (Libgen) | production `Libgen.search_title` |
+
+Default offline proof path for agents:
 
 ```bash
-uv run pytest -m network
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py doctor --run-id <id>
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py offline --run-id <id>
 ```
 
-Slow downloads:
+Live list scrape (one mapped feature, no downloads):
 
 ```bash
-uv run pytest -m slow
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py scrape-lists --max-lists 1 --run-id <id>
 ```
 
-Drive feature recipes under `features/`. Capture command, stdout, stderr, and exit code for every step.
+Full user path (last resort only). Use a disposable directory as cwd, never the repo:
+
+```bash
+WORKDIR=$(mktemp -d /tmp/best-books-full-XXXX)
+cd "$WORKDIR"
+uv run --directory <repo-root> python <repo-root>/main.py
+# expect books/ and logs/ under $WORKDIR; capture tree listing as evidence
+```
+
+Abort full runs with Ctrl+C; scraper handles KeyboardInterrupt and prints partial stats.
+
+Feature recipes live in `features/`. Drive from that map. A proof that only runs offline tests does not cover live scrape or Libgen features listed there.
 
 ## Evidence
 
-Store under `.cursor/skills/verify-best-books/evidence/<run-id>/`:
+Directory: `.cursor/skills/verify-best-books/evidence/<run-id>/`
 
-- `doctor.txt` (command output)
-- `pytest-offline.txt` (full pytest -v output)
-- `import-smoke.txt` (import check)
+Typical artifacts:
+
+- `doctor.txt`
+- `pytest-offline.txt`
+- `scrape-lists.json` / `scrape-lists.txt`
+- `libgen-search.json` / `libgen-search.txt`
 
 Proof standards:
 
-- Offline unit tests must pass with the CI marker expression.
-- Utils and pure helpers are proven by literal assertions in `tests/`.
-- Network and download paths are proven only when intentionally opted in; a skipped or deselected network test is not a pass of live Libgen.
-- Never claim a full-site download worked from unit tests alone.
+- Exercise production classes (`Scraper`, `Libgen`) or the real CLI entry, not reimplemented parsers.
+- Capture the command, exit code, and resulting artifact body.
+- For mutations (downloads), list the created `.epub` paths and sizes after the action.
+- Offline green does not prove Libgen or best-books.dev still work.
+- Mocks belong only behind boundaries the product already isolates; this harness does not mock HTTP for live commands.
 
 ## Cleanup
 
-Remove any temporary download dirs the run created under `/tmp` or a disposable `books-verify-*` path. Do not delete `evidence/`. Do not delete the user's real `books/` or `logs/` trees unless this run created them inside a disposable path.
+- Helper temp dirs are removed automatically (`tempfile.TemporaryDirectory` in `scrape-lists`).
+- Delete any disposable full-run workdir you created under `/tmp/best-books-full-*`.
+- Do not delete `evidence/`.
+- Do not delete the user's real repo `books/` or `logs/` unless this run created them and the user asked to reclaim space.
+- No process-name kills. Only stop processes this run started (the helper exits on its own; a full `main.py` is stopped with Ctrl+C on that process).
 
 ## Helpers
 
-No extra helper binary. Use `uv run` for every command so the project venv is consistent with CI.
+Script: `.cursor/skills/verify-best-books/helpers/verify_best_books.py`
+
+```bash
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py doctor
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py offline
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py scrape-lists --max-lists 1
+uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py libgen-search --title "Python Crash Course" --author "Eric Matthes"
+```
+
+Pass `--run-id <name>` to keep all artifacts for one proof in one folder.

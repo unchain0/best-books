@@ -1,30 +1,30 @@
 # best-books verification map
 
-Maintained source for verifying user-facing behavior of the best-books downloader CLI.
+Maintained source for verifying user-facing behavior of the best-books downloader.
 
 ## Baseline preconditions
 
-- Python 3.13 and `uv` available.
-- `uv sync --locked --group dev` completed in the repo root.
-- Working directory is the repo root.
-- Do not point verification at a real `books/` tree the user cares about. Use a disposable directory when a download proof is required.
-- Prefer offline recipes. Live Libgen and best-books.dev calls are flaky from CI and shared networks.
+- Repo root checkout with `uv` on `PATH`.
+- `uv sync --locked --group dev` completed.
+- Doctor exits 0.
+- Prefer disposable evidence run ids. Never point a full `main.py` run at a `books/` tree the user still needs.
 
 ## Driving conventions
 
-- Run every command through `uv run`.
-- Treat pytest marker filters as part of the command contract.
-- Capture exit code and the short test summary line.
-- A deselected network test is not evidence that Libgen search works.
+- Every command goes through `uv run python .cursor/skills/verify-best-books/helpers/verify_best_books.py …` unless a feature file shows a literal `main.py` full-run recipe.
+- Keep marker filters and flag values exact.
+- Record exit code and the evidence path the helper prints.
 
 ## Proof and skip reporting
 
-- Offline proof is the CI marker run plus doctor.
-- Network proof must show a live request path and a non-empty or intentionally empty result with the remote reachable.
-- Report unreachable Libgen or best-books.dev with the exception text; do not retry endlessly.
+- Offline proof is doctor + `offline`.
+- Live scrape proof needs `scrape-lists.json` with `list_count > 0` and sampled `book_count > 0`.
+- Live Libgen proof needs `libgen-search.json` with `result_count > 0`, or an explicit environment failure (`exit=2` with connection error text).
+- Do not report a skipped network feature as verified via offline tests.
 
 ## Features
 
-- [Offline unit gates](./offline-unit-gates.md) covers CI-equivalent lint-free unit proof.
-- [Libgen search helpers](./libgen-search-helpers.md) covers pure author/title filtering without the network.
-- [Live Libgen search](./live-libgen-search.md) covers opt-in network search (manual only).
+- [Offline unit gates](./offline-unit-gates.md) CI-equivalent proof with no network.
+- [List catalog scrape](./list-catalog-scrape.md) best-books.dev list and book parsing via production `Scraper`.
+- [Libgen EPUB search](./libgen-epub-search.md) single-title Libgen search via production `Libgen`.
+- [Full download run](./full-download-run.md) real `main.py` path in a disposable cwd (manual, expensive).
